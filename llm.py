@@ -2,8 +2,11 @@ import os
 from typing import Dict, List
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+
+from state import UserState
+from prompts import build_system_prompt
 
 
 load_dotenv()
@@ -51,7 +54,7 @@ def summarize_dialog(messages):
     return summary_response.content
 
 
-def generate_reply(user_id: int, user_input: str) -> str:
+def generate_reply(user_id: int, user_input: str, user_state: UserState) -> str:
     """
     Обновляет историю диалога пользователя и возвращает текст ответа модели.
     """
@@ -62,11 +65,15 @@ def generate_reply(user_id: int, user_input: str) -> str:
     # 2. Формируем укороченную историю, которую реально пошлём в модель
     history_for_model = full_history[-MAX_TURNS_FOR_MODEL:]
 
-    # 3. Прогоняем через модель только последние сообщения
-    response = model.invoke(history_for_model)
+    # 3. Добавляем системный промпт с учётом языка и стиля
+    system_prompt_text = build_system_prompt(user_state)
+    messages_for_model = [SystemMessage(content=system_prompt_text)] + history_for_model
+
+    # 4. Прогоняем через модель
+    response = model.invoke(messages_for_model)
     full_history = full_history + [response]
 
-    # 4. При необходимости — суммаризируем “старую” часть диалога, чтобы не росла бесконечно
+    # 5. При необходимости — суммаризируем “старую” часть диалога, чтобы не росла бесконечно
     if len(full_history) > MAX_STORED_MESSAGES:
         old_part = full_history[:-KEEP_RECENT_AFTER_SUMMARY]
         recent_part = full_history[-KEEP_RECENT_AFTER_SUMMARY:]
@@ -79,7 +86,7 @@ def generate_reply(user_id: int, user_input: str) -> str:
         # В истории остаётся одно саммари + несколько последних “сырых” сообщений
         full_history = [summary_message] + recent_part
 
-    # 5. Сохраняем обновлённую историю пользователя
+    # 6. Сохраняем обновлённую историю пользователя
     _user_conversations[user_id] = full_history
 
     return response.content

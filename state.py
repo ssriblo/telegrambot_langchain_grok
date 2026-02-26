@@ -54,3 +54,20 @@ def set_language(user_id: int, language: str) -> None:
     state.language = language
     save_user_state(state)
 
+
+def set_raw_preferences(user_id: int, text: str) -> None:
+    """
+    Черновой способ сохранить пожелания пользователя:
+    всю фразу кладём в interests как один элемент.
+    Потом это можно заменить на более структурированный парсинг.
+    """
+    state = get_user_state(user_id)
+    state.preferences.interests = [text.strip()] if text.strip() else []
+    save_user_state(state)
+
+
+def set_location(user_id: int, lat: float, lon: float) -> None:
+    state = get_user_state(user_id)
+    state.last_location = (lat, lon)
+    save_user_state(state)
+
