@@ -113,22 +113,36 @@ async def handle_message(message: types.Message):
     if state.stage == "ASK_PREFERENCES":
         set_raw_preferences(user_id, user_input)
 
+        # По требованиям MVP: геолокация обязательна для построения маршрута.
         if state.language == "ru":
             await message.answer(
                 "Спасибо! Я запомнил твои пожелания.\n\n"
-                "Если хочешь, я могу подобрать места прямо рядом с тобой — "
-                "просто отправь свою геолокацию через кнопку 📎 → «Геопозиция».\n\n"
-                "А ещё ты можешь задавать любые вопросы про Гюмри, а я буду предлагать маршрут и места."
+                "Чтобы я мог построить маршрут от твоей текущей точки, пожалуйста, "
+                "отправь геолокацию через кнопку 📎 → «Геопозиция».\n\n"
+                "Без геолокации я не смогу предложить маршрут."
             )
         else:
             await message.answer(
                 "Thank you! I've saved your preferences.\n\n"
-                "If you want, I can suggest places right around you — "
-                "just send me your location via the 📎 → “Location” button.\n\n"
-                "You can also ask me anything about Gyumri and I'll suggest routes and places."
+                "To build a route from your current position, please send your location "
+                "via the 📎 → “Location” button.\n\n"
+                "Without your location I can't suggest a route."
             )
 
-        update_stage(user_id, "FREE_CHAT")
+        update_stage(user_id, "ASK_LOCATION_REQUIRED")
+        return
+
+    # Ждём геолокацию, без неё не переходим в основной режим
+    if state.stage == "ASK_LOCATION_REQUIRED":
+        if state.language == "ru":
+            await message.answer(
+                "Пожалуйста, отправь геолокацию через 📎 → «Геопозиция», "
+                "и я подберу места и маршрут рядом с тобой."
+            )
+        else:
+            await message.answer(
+                "Please send your location via 📎 → “Location”, and I will suggest places and a route nearby."
+            )
         return
 
     # Основной режим общения: учитываем язык, стиль и базовые пожелания
@@ -156,6 +170,12 @@ async def handle_location(message: types.Message):
     lat = loc.latitude
     lon = loc.longitude
     set_location(user_id, lat, lon)
+
+    # Если мы ждали гео как обязательный шаг — переходим дальше.
+    # Следующий этап (программы/маршрут) добавим отдельно; пока переводим в общий режим.
+    if state.stage == "ASK_LOCATION_REQUIRED":
+        update_stage(user_id, "FREE_CHAT")
+
     state = get_user_state(user_id)
     print("=== STATE DEBUG: after location update ===")
     print(state)
@@ -165,6 +185,18 @@ async def handle_location(message: types.Message):
     text = format_places_for_user(nearby, language=state.language)
 
     await message.answer(text)
+
+    # Подсказка, что можно делать дальше
+    if state.language == "ru":
+        await message.answer(
+            "Отлично! Теперь можешь написать, что ты хочешь сделать дальше (например: "
+            "«покажи маршрут на 2 часа», «где поесть рядом», «что рядом интересного?»)."
+        )
+    else:
+        await message.answer(
+            "Great! Now tell me what you'd like to do next (e.g. "
+            "“build me a 2-hour route”, “places to eat nearby”, “what sights are around?”)."
+        )
 
 
 if __name__ == "__main__":

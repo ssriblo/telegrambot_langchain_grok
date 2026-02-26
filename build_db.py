@@ -25,11 +25,25 @@ GYUMRI_LON = 43.8476
 # Радиус поиска в км (подбери по вкусу)
 SEARCH_RADIUS_KM = 5.0
 
+# Фильтры OpenTripMap по "kinds".
+# Важно: значение kinds должно быть составлено из существующих категорий OTM.
+# Например: interesting_places, museums, architecture, historic, cultural, monuments, foods.
+# (Категории "sights" и "museum" у OTM НЕ существуют — будут 400.)
+#
+# Для MVP отдельно забираем "foods", иначе еда часто почти не попадает в выдачу.
+SIGHT_KINDS = "interesting_places,museums,architecture,historic,cultural,monuments"
+FOOD_KINDS = "foods"
+
+# Минимальная популярность/рейтинг (см. docs: 1..3 и варианты *h)
+SIGHT_RATE = "2h"  # чуть более качественные/"называемые" объекты + наследие
+FOOD_RATE = "1"    # для еды лучше брать шире, иначе будет мало результатов
+
 # Файл для сохранения результата (двуязычный JSON)
 OUTPUT_JSON_PATH = "places_gyumri.json"
 
 # Лимиты / настройки
-MAX_PLACES = 150         # максимум мест для MVP
+MAX_SIGHT_PLACES = 180   # сколько POI запрашивать для sightseeing
+MAX_FOOD_PLACES = 200    # сколько POI запрашивать для еды
 REQUEST_SLEEP_SEC = 0.2  # пауза между запросами, чтобы не душить API
 
 
@@ -48,6 +62,8 @@ def fetch_places_list(
     radius_km: float,
     limit: int = 150,
     lang: str = "en",
+    kinds: Optional[str] = None,
+    rate: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Берёт список мест вокруг заданной точки.
@@ -63,9 +79,14 @@ def fetch_places_list(
         "lon": lon,
         "radius": radius_m,
         "limit": limit,
-        "rate": 2,          # 2-3: более интересные места
-        "format": "json"
+        "format": "json",
     }
+
+    # kinds и rate — опциональные фильтры
+    if kinds:
+        params["kinds"] = kinds
+    if rate:
+        params["rate"] = rate
 
     resp = requests.get(url, params=params, timeout=10)
     resp.raise_for_status()
@@ -124,12 +145,18 @@ def normalize_place_bilingual(raw_en: Dict[str, Any], raw_ru: Dict[str, Any]) ->
     # Категория / тип
     kinds = raw_en.get("kinds", "") or raw_ru.get("kinds", "")
     kinds_list = [k.strip() for k in kinds.split(",") if k.strip()]
-    # Черновое отнесение к категориям
-    if any("restaurant" in k or "food" in k for k in kinds_list):
+
+    kinds_set = {k.lower() for k in kinds_list}
+
+    def _has_any_substr(substrings: List[str]) -> bool:
+        return any(any(s in k for s in substrings) for k in kinds_set)
+
+    # Черновое отнесение к категориям (учитываем, что kinds бывают иерархические типа "catering.restaurant")
+    if _has_any_substr(["food", "restaurant", "cafe", "bar", "fast_food"]):
         category = "food"
-    elif any("museum" in k for k in kinds_list):
+    elif _has_any_substr(["museum"]):
         category = "museum"
-    elif any("architecture" in k or "historic" in k for k in kinds_list):
+    elif _has_any_substr(["sight", "architecture", "historic", "interesting_places"]):
         category = "sight"
     else:
         category = "other"
@@ -184,27 +211,57 @@ def normalize_place_bilingual(raw_en: Dict[str, Any], raw_ru: Dict[str, Any]) ->
 def build_gyumri_db() -> List[Dict[str, Any]]:
     """
     Собирает двуязычную базу мест по Гюмри (EN + RU) и сохраняет в places_gyumri.json.
+
+    Важно: OTM по умолчанию возвращает interesting_places, и еда часто почти не попадает.
+    Поэтому для MVP отдельно забираем список foods и затем объединяем.
     """
-    print("Fetching places list from OpenTripMap (EN)...")
-    raw_list_en = fetch_places_list(
+    print("Fetching places list from OpenTripMap (EN) for sights...")
+    raw_sights_en = fetch_places_list(
         GYUMRI_LAT,
         GYUMRI_LON,
         SEARCH_RADIUS_KM,
-        limit=MAX_PLACES,
+        limit=MAX_SIGHT_PLACES,
         lang="en",
+        kinds=SIGHT_KINDS,
+        rate=SIGHT_RATE,
     )
-    print(f"Got {len(raw_list_en)} raw places (EN)")
+    print(f"Got {len(raw_sights_en)} raw sights (EN)")
+
+    print("Fetching places list from OpenTripMap (EN) for foods...")
+    raw_foods_en = fetch_places_list(
+        GYUMRI_LAT,
+        GYUMRI_LON,
+        SEARCH_RADIUS_KM,
+        limit=MAX_FOOD_PLACES,
+        lang="en",
+        kinds=FOOD_KINDS,
+        rate=FOOD_RATE,
+    )
+    print(f"Got {len(raw_foods_en)} raw foods (EN)")
+
+    # Объединяем списки по xid (чтобы не было дублей)
+    items_by_xid: Dict[str, Dict[str, Any]] = {}
+    for item in raw_sights_en:
+        xid = item.get("xid")
+        if xid:
+            items_by_xid.setdefault(xid, item)
+    for item in raw_foods_en:
+        xid = item.get("xid")
+        if xid:
+            # Если объект попал и в sights, и в foods, лучше оставить foods-версию
+            items_by_xid[xid] = item
+
+    xids = list(items_by_xid.keys())
+    print(f"Total unique xids to fetch details for: {len(xids)}")
 
     detailed_en: Dict[str, Dict[str, Any]] = {}
     detailed_ru: Dict[str, Dict[str, Any]] = {}
 
     # Для каждого места запросим детали на EN и RU
-    for i, item_en in enumerate(raw_list_en, start=1):
-        xid = item_en.get("xid")
-        if not xid:
-            continue
+    for i, xid in enumerate(xids, start=1):
+        item_en = items_by_xid[xid]
+        print(f"[{i}/{len(xids)}] Fetching details for xid={xid} (EN/RU)")
 
-        print(f"[{i}/{len(raw_list_en)}] Fetching details for xid={xid} (EN/RU)")
         details_en = fetch_place_details(xid, lang="en")
         details_ru = fetch_place_details(xid, lang="ru")
         if details_en is None or details_ru is None:

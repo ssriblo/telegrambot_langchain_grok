@@ -13,7 +13,21 @@ def _load_places() -> List[Dict[str, Any]]:
         return _PLACES
 
     base_dir = os.path.dirname(__file__)
-    path = os.path.join(base_dir, "places_gyumri.json")
+
+    # По умолчанию используем компактную MVP-базу с заполненными описаниями.
+    # Можно переопределить через переменную окружения PLACES_JSON.
+    env_path = os.environ.get("PLACES_JSON")
+    candidates = [
+        env_path,
+        os.path.join(base_dir, "places_gyumri_mvp.json"),
+        os.path.join(base_dir, "places_gyumri.json"),
+    ]
+
+    path = next((p for p in candidates if p and os.path.exists(p)), None)
+    if path is None:
+        raise FileNotFoundError(
+            "Places database not found. Tried PLACES_JSON, places_gyumri_mvp.json, places_gyumri.json"
+        )
 
     with open(path, "r", encoding="utf-8") as f:
         _PLACES = json.load(f)
