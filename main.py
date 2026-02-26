@@ -51,12 +51,15 @@ def _normalize_style_choice(text: str) -> str:
     return "emotional"
 
 
-@dp.message()
+@dp.message(F.text)
 async def handle_message(message: types.Message):
     user_input = message.text or ""
     user_id = message.from_user.id
 
     state = get_user_state(user_id)
+    print("=== STATE DEBUG: current user state ===")
+    print(state)
+    print("=== END STATE DEBUG ===")
 
     # Новый пользователь — приветствие и выбор стиля
     if state.stage == "NEW_USER":
@@ -136,10 +139,6 @@ async def handle_message(message: types.Message):
     await message.answer(reply_text)
 
 
-if __name__ == "__main__":
-    dp.run_polling(bot)
-
-
 @dp.message(F.location)
 async def handle_location(message: types.Message):
     """
@@ -147,6 +146,8 @@ async def handle_location(message: types.Message):
     """
     user_id = message.from_user.id
     state = get_user_state(user_id)
+    print("=== STATE DEBUG: before location update ===")
+    print(state)
 
     loc = message.location
     if loc is None:
@@ -155,8 +156,16 @@ async def handle_location(message: types.Message):
     lat = loc.latitude
     lon = loc.longitude
     set_location(user_id, lat, lon)
+    state = get_user_state(user_id)
+    print("=== STATE DEBUG: after location update ===")
+    print(state)
 
     nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=5)
+    print(f"=== LOCATION DEBUG: found {len(nearby)} nearby places ===")
     text = format_places_for_user(nearby, language=state.language)
 
     await message.answer(text)
+
+
+if __name__ == "__main__":
+    dp.run_polling(bot)

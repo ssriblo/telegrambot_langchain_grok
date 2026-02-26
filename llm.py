@@ -7,6 +7,7 @@ from langchain_groq import ChatGroq
 
 from state import UserState
 from prompts import build_system_prompt
+from data_gyumri import get_nearby_places
 
 
 load_dotenv()
@@ -62,18 +63,76 @@ def generate_reply(user_id: int, user_input: str, user_state: UserState) -> str:
     full_history = _user_conversations.get(user_id, [])
     full_history = full_history + [HumanMessage(content=user_input)]
 
-    # 2. Формируем укороченную историю, которую реально пошлём в модель
+    # 2. Формируем укороченную историю диалога
     history_for_model = full_history[-MAX_TURNS_FOR_MODEL:]
 
     # 3. Добавляем системный промпт с учётом языка и стиля
     system_prompt_text = build_system_prompt(user_state)
-    messages_for_model = [SystemMessage(content=system_prompt_text)] + history_for_model
+    # Логирование для отладки
+    print("=== LLM DEBUG: system prompt ===")
+    print(system_prompt_text)
+    print("=== END system prompt ===")
+    messages_for_model = [SystemMessage(content=system_prompt_text)]
 
-    # 4. Прогоняем через модель
+    # 4. Если известна последняя локация — подмешиваем список ближайших мест,
+    # чтобы модель опиралась на реальную базу, а не выдумывала точки.
+    if user_state.last_location is not None:
+        lat, lon = user_state.last_location
+        nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=8)
+
+        if nearby:
+            lang = user_state.language if user_state.language in ("ru", "en") else "en"
+            if lang == "ru":
+                header = (
+                    "Вот список доступных мест поблизости, которые ты можешь "
+                    "использовать в качестве конкретных рекомендаций. "
+                    "Не придумывай другие объекты, опирайся на этот список:\n\n"
+                )
+                name_key = "name_ru"
+                desc_key = "short_description_ru"
+            else:
+                header = (
+                    "Here is the list of nearby places you can use for concrete recommendations. "
+                    "Do not invent other venues; rely on this list:\n\n"
+                )
+                name_key = "name_en"
+                desc_key = "short_description_en"
+
+            lines = [header]
+            for idx, p in enumerate(nearby, start=1):
+                name = p.get(name_key) or p.get("name_en") or p.get("name_ru") or "Unknown place"
+                descr = p.get(desc_key) or ""
+                dist = p.get("_distance_km")
+                if dist is not None:
+                    if lang == "ru":
+                        line = f"{idx}. {name} — примерно {dist} км.\n{descr}"
+                    else:
+                        line = f"{idx}. {name} — about {dist} km.\n{descr}"
+                else:
+                    line = f"{idx}. {name}\n{descr}"
+                lines.append(line)
+
+            context_text = "\n\n".join(lines)
+            print("=== LLM DEBUG: nearby places context ===")
+            print(context_text)
+            print("=== END nearby places context ===")
+            messages_for_model.append(HumanMessage(content=context_text))
+
+    # 5. Добавляем историю диалога после контекста
+    messages_for_model.extend(history_for_model)
+
+    # 6. Прогоняем через модель
+    print("=== LLM DEBUG: messages_for_model (types) ===")
+    for i, m in enumerate(messages_for_model):
+        m_type = type(m).__name__
+        snippet = (m.content or "")[:200] if isinstance(m, (HumanMessage, SystemMessage)) else ""
+        print(f"{i}. {m_type}: {snippet!r}")
+    print("=== END messages_for_model ===")
+
     response = model.invoke(messages_for_model)
     full_history = full_history + [response]
 
-    # 5. При необходимости — суммаризируем “старую” часть диалога, чтобы не росла бесконечно
+    # 7. При необходимости — суммаризируем “старую” часть диалога, чтобы не росла бесконечно
     if len(full_history) > MAX_STORED_MESSAGES:
         old_part = full_history[:-KEEP_RECENT_AFTER_SUMMARY]
         recent_part = full_history[-KEEP_RECENT_AFTER_SUMMARY:]
@@ -86,7 +145,7 @@ def generate_reply(user_id: int, user_input: str, user_state: UserState) -> str:
         # В истории остаётся одно саммари + несколько последних “сырых” сообщений
         full_history = [summary_message] + recent_part
 
-    # 6. Сохраняем обновлённую историю пользователя
+    # 8. Сохраняем обновлённую историю пользователя
     _user_conversations[user_id] = full_history
 
     return response.content
