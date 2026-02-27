@@ -38,11 +38,17 @@ def _uid(message_or_cb) -> int:
         return message_or_cb.from_user.id
     return 0
 
-def _detect_language(message: types.Message, text: str) -> str:
-    if any("а" <= ch <= "я" or "А" <= ch <= "Я" for ch in text):
-        return "ru"
+def _detect_device_language(message: types.Message) -> str:
+    """Определяет язык устройства пользователя из Telegram."""
     code = (message.from_user.language_code or "en").lower()
     return "ru" if code.startswith("ru") else "en"
+
+
+def get_language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")],
+        [InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")]
+    ])
 
 # ── keyboards ────────────────────────────────────────────
 
@@ -151,23 +157,23 @@ async def cmd_start(message: types.Message):
     uid = message.from_user.id
     log.info(f"[U:{uid}][CMD] /start or /reset")
     reset_user_state(uid)
-    user_input = message.text or ""
-    lang = _detect_language(message, user_input)
-    set_language(uid, lang)
+    device_lang = _detect_device_language(message)
+    set_language(uid, device_lang)
+    log.debug(f"[U:{uid}][CMD] device_lang={device_lang}")
 
-    if lang == "ru":
+    if device_lang == "ru":
         await message.answer(
-            "Привет! Я твой виртуальный гид по Гюмри.\n\n"
-            "Сначала выберем стиль общения:",
-            reply_markup=get_style_keyboard(lang)
+            "Привет! 👋 Я твой виртуальный гид по Гюмри.\n\n"
+            "Выбери язык общения:",
+            reply_markup=get_language_keyboard()
         )
     else:
         await message.answer(
-            "Hi! I'm your virtual guide in Gyumri.\n\n"
-            "First, let's choose the communication style:",
-            reply_markup=get_style_keyboard(lang)
+            "Hi! 👋 I'm your virtual guide in Gyumri.\n\n"
+            "Choose your preferred language:",
+            reply_markup=get_language_keyboard()
         )
-    update_stage(uid, "ASK_STYLE")
+    update_stage(uid, "ASK_LANGUAGE")
 
 
 @dp.message(Command("style"))
@@ -195,6 +201,12 @@ async def handle_message(message: types.Message):
     if state.stage == "NEW_USER":
         log.debug(f"[U:{uid}][MSG] NEW_USER → cmd_start")
         await cmd_start(message)
+        return
+
+    if state.stage == "ASK_LANGUAGE":
+        log.debug(f"[U:{uid}][MSG] ASK_LANGUAGE → prompt buttons")
+        msg = "Пожалуйста, выбери язык кнопкой выше." if state.language == "ru" else "Please choose your language using the buttons above."
+        await message.answer(msg)
         return
 
     if state.stage == "ASK_STYLE":
@@ -254,7 +266,25 @@ async def process_callback(callback_query: types.CallbackQuery):
               f"route={state.current_route} visited={state.visited_places} "
               f"program={state.program_selected} location={state.last_location}")
 
-    if data.startswith("style_"):
+    if data.startswith("lang_"):
+        chosen_lang = data.split("_")[1]  # "ru" or "en"
+        log.debug(f"[U:{uid}][CB] language chosen: {chosen_lang}")
+        set_language(uid, chosen_lang)
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+
+        if chosen_lang == "ru":
+            await callback_query.message.answer(
+                "Отлично! Теперь выбери стиль общения:",
+                reply_markup=get_style_keyboard("ru")
+            )
+        else:
+            await callback_query.message.answer(
+                "Great! Now choose the communication style:",
+                reply_markup=get_style_keyboard("en")
+            )
+        update_stage(uid, "ASK_STYLE")
+
+    elif data.startswith("style_"):
         style = data.split("_")[1]
         log.debug(f"[U:{uid}][CB] style → {style}")
         set_style(uid, style)
@@ -451,5 +481,16 @@ async def handle_location(message: types.Message):
 
 
 if __name__ == "__main__":
-    log.info("=== BOT STARTING ===")
-    dp.run_polling(bot)
+    import asyncio
+    from aiogram.types import BotCommand
+
+    async def main():
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Начать / Start the tour guide"),
+            BotCommand(command="reset", description="Сбросить и начать заново / Reset"),
+            BotCommand(command="style", description="Сменить стиль общения / Change style"),
+        ])
+        log.info("=== BOT STARTING (menu commands set) ===")
+        await dp.start_polling(bot)
+
+    asyncio.run(main())
