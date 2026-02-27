@@ -2,6 +2,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
+from data_gyumri import _haversine_km
 import os
 
 from llm import generate_reply
@@ -77,6 +78,61 @@ def get_on_route_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🗺 Show Route", callback_data="route_show")],
             [InlineKeyboardButton(text="🍽 Eat Nearby", callback_data="route_eat_nearby")]
         ])
+
+
+async def _send_place_navigation(
+    target,  # message or callback_query.message
+    place: dict,
+    state,
+    prefix_ru: str = "📍 Следующая точка:",
+    prefix_en: str = "📍 Next stop:",
+    show_route_kb: bool = True,
+):
+    """
+    Sends a place card with:
+    1. Text description + Google Maps link + distance from user
+    2. Telegram venue (native map pin that opens in any navigator)
+    3. On-route keyboard buttons
+    """
+    lang = state.language
+    name = place.get(f"name_{lang}") or place.get("name_en") or "Unknown"
+    desc = place.get(f"short_description_{lang}") or place.get("short_description_en") or ""
+    lat = place.get("lat")
+    lon = place.get("lon")
+
+    prefix = prefix_ru if lang == "ru" else prefix_en
+
+    # Build text with Google Maps link
+    lines = [f"{prefix} <b>{name}</b>", ""]
+    if desc:
+        lines.append(desc)
+        lines.append("")
+
+    # Distance from user
+    if state.last_location and lat and lon:
+        user_lat, user_lon = state.last_location
+        dist = _haversine_km(user_lat, user_lon, float(lat), float(lon))
+        dist_text = f"~{dist:.1f} км от тебя" if lang == "ru" else f"~{dist:.1f} km from you"
+        lines.append(f"📏 {dist_text}")
+
+    # Google Maps link
+    if lat and lon:
+        maps_url = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=walking"
+        link_label = "🗺 Открыть в Google Maps (пешком)" if lang == "ru" else "🗺 Open in Google Maps (walking)"
+        lines.append(f'<a href="{maps_url}">{link_label}</a>')
+
+    text = "\n".join(lines)
+    kb = get_on_route_keyboard(lang) if show_route_kb else None
+    await target.answer(text, parse_mode="HTML", reply_markup=kb)
+
+    # Send Telegram venue (native navigable pin)
+    if lat and lon:
+        await target.answer_venue(
+            latitude=float(lat),
+            longitude=float(lon),
+            title=name,
+            address=desc[:100] if desc else name,
+        )
 
 @dp.message(Command("start", "reset"))
 async def cmd_start(message: types.Message):
@@ -202,10 +258,11 @@ async def process_callback(callback_query: types.CallbackQuery):
             first_place_id = state.current_route[0]
             place = get_place_by_id(first_place_id)
             if place:
-                name = place.get(f"name_{state.language}") or place.get("name_en")
-                desc = place.get(f"short_description_{state.language}") or place.get("short_description_en")
-                text = f"📍 Первая точка: **{name}**\n\n{desc}" if state.language == "ru" else f"📍 First stop: **{name}**\n\n{desc}"
-                await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+                await _send_place_navigation(
+                    callback_query.message, place, state,
+                    prefix_ru="📍 Первая точка:",
+                    prefix_en="📍 First stop:",
+                )
     
     elif data.startswith("route_"):
         action = data.split("_", 1)[1]
@@ -219,11 +276,7 @@ async def process_callback(callback_query: types.CallbackQuery):
                 next_place_id = state.current_route[0]
                 place = get_place_by_id(next_place_id)
                 if place:
-                    name = place.get(f"name_{state.language}") or place.get("name_en")
-                    desc = place.get(f"short_description_{state.language}") or place.get("short_description_en")
-                    prefix = "📍 Следующая точка:" if state.language == "ru" else "📍 Next stop:"
-                    text = f"{prefix} **{name}**\n\n{desc}"
-                    await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+                    await _send_place_navigation(callback_query.message, place, state)
             else:
                 text = "🎉 Маршрут закончен!" if state.language == "ru" else "🎉 Route finished!"
                 update_stage(user_id, "FREE_CHAT")

@@ -27,3 +27,13 @@
 ## 5. LLM Integration Updates
 - [ ] Send top-10 places as context if no location is available, or handle appropriately
 - [ ] Integrate dynamic prompt info for active route
+
+***
+Я закончил внедрение всех этапов MVP, описанных в task.md.
+
+Что было сделано:
+
+✅ routing.py: Создан модуль, генерирующий 3 варианта: Классика (Classic), Фуд-тур (Food) и Спокойная прогулка (Chill walk) с учетом ближайших мест.
+✅ state.py: Добавлены поля program_selected, generated_programs для хранения вариантов, и необходимые хелперы для отслеживания текущего маршрута и посещенных точек.
+✅ main.py: Полностью переработан: добавлены Inline ключи (кнопки выбора стиля, выбора варианта маршрута, а также "Следующая", "Пропустить", "Показать маршрут", "Поесть рядом"). Полная поддержка FSM-состояний (ASK_STYLE, ASK_LOCATION_REQUIRED, SHOW_PROGRAM_OPTIONS, ON_ROUTE). Внедрены команды /start и /reset.
+✅ llm.py: В контекст LLM теперь передаётся информация о текущем активном маршруте пользователя (если он на маршруте), а также fallback-список ТОП-10 мест для рекомендации при отсутствии геолокации, чтобы избежать галлюцинаций.
