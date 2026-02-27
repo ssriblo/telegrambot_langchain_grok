@@ -20,6 +20,8 @@ class UserState:
     current_route: List[str] = field(default_factory=list)
     visited_places: List[str] = field(default_factory=list)
     history_summary: Optional[str] = None
+    program_selected: Optional[str] = None
+    generated_programs: Dict[str, List[str]] = field(default_factory=dict)
 
 
 _user_states: Dict[int, UserState] = {}
@@ -70,4 +72,31 @@ def set_location(user_id: int, lat: float, lon: float) -> None:
     state = get_user_state(user_id)
     state.last_location = (lat, lon)
     save_user_state(state)
+
+
+def set_program(user_id: int, program_id: str) -> None:
+    state = get_user_state(user_id)
+    state.program_selected = program_id
+    if program_id in state.generated_programs:
+        state.current_route = list(state.generated_programs[program_id])
+    state.visited_places = []
+    save_user_state(state)
+
+
+def save_generated_programs(user_id: int, programs: Dict[str, List[str]]) -> None:
+    state = get_user_state(user_id)
+    state.generated_programs = programs
+    save_user_state(state)
+
+
+def mark_place_visited(user_id: int, place_id: str) -> None:
+    state = get_user_state(user_id)
+    if place_id not in state.visited_places:
+        state.visited_places.append(place_id)
+    save_user_state(state)
+
+def reset_user_state(user_id: int) -> None:
+    if user_id in _user_states:
+        del _user_states[user_id]
+        get_user_state(user_id) # creates new
 

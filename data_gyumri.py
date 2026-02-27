@@ -1,7 +1,7 @@
 import json
 import math
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 _PLACES: List[Dict[str, Any]] = []
@@ -56,6 +56,7 @@ def get_nearby_places(
     lon: float,
     max_distance_km: float = 2.0,
     limit: int = 5,
+    categories: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Возвращает ближайшие к пользователю места в пределах max_distance_km.
@@ -68,6 +69,11 @@ def get_nearby_places(
         p_lon = p.get("lon")
         if p_lat is None or p_lon is None:
             continue
+
+        if categories is not None:
+            cat = p.get("category")
+            if cat not in categories:
+                continue
 
         dist = _haversine_km(lat, lon, float(p_lat), float(p_lon))
         if dist <= max_distance_km:
@@ -83,6 +89,14 @@ def get_nearby_places(
         result.append(copy)
 
     return result
+
+
+def get_place_by_id(place_id: str) -> Optional[Dict[str, Any]]:
+    places = _load_places()
+    for p in places:
+        if str(p.get("id")) == str(place_id):
+            return p
+    return None
 
 
 def format_places_for_user(places: List[Dict[str, Any]], language: str) -> str:
