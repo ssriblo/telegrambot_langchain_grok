@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from logger_setup import log
+
 
 @dataclass
 class UserPreferences:
@@ -32,6 +34,7 @@ def get_user_state(user_id: int) -> UserState:
     if state is None:
         state = UserState(user_id=user_id)
         _user_states[user_id] = state
+        log.debug(f"[STATE] Created new state for user {user_id}")
     return state
 
 
@@ -41,37 +44,39 @@ def save_user_state(state: UserState) -> None:
 
 def update_stage(user_id: int, stage: str) -> None:
     state = get_user_state(user_id)
+    old = state.stage
     state.stage = stage
     save_user_state(state)
+    log.info(f"[STATE] user={user_id} stage: {old} → {stage}")
 
 
 def set_style(user_id: int, style: str) -> None:
     state = get_user_state(user_id)
+    old = state.style
     state.style = style
     save_user_state(state)
+    log.info(f"[STATE] user={user_id} style: {old} → {style}")
 
 
 def set_language(user_id: int, language: str) -> None:
     state = get_user_state(user_id)
     state.language = language
     save_user_state(state)
+    log.debug(f"[STATE] user={user_id} language set to {language}")
 
 
 def set_raw_preferences(user_id: int, text: str) -> None:
-    """
-    Черновой способ сохранить пожелания пользователя:
-    всю фразу кладём в interests как один элемент.
-    Потом это можно заменить на более структурированный парсинг.
-    """
     state = get_user_state(user_id)
     state.preferences.interests = [text.strip()] if text.strip() else []
     save_user_state(state)
+    log.info(f"[STATE] user={user_id} preferences saved: {state.preferences.interests!r}")
 
 
 def set_location(user_id: int, lat: float, lon: float) -> None:
     state = get_user_state(user_id)
     state.last_location = (lat, lon)
     save_user_state(state)
+    log.info(f"[STATE] user={user_id} location set to ({lat}, {lon})")
 
 
 def set_program(user_id: int, program_id: str) -> None:
@@ -79,6 +84,9 @@ def set_program(user_id: int, program_id: str) -> None:
     state.program_selected = program_id
     if program_id in state.generated_programs:
         state.current_route = list(state.generated_programs[program_id])
+        log.info(f"[STATE] user={user_id} program={program_id}, route={state.current_route}")
+    else:
+        log.warning(f"[STATE] user={user_id} program={program_id} NOT FOUND in generated_programs!")
     state.visited_places = []
     save_user_state(state)
 
@@ -87,6 +95,7 @@ def save_generated_programs(user_id: int, programs: Dict[str, List[str]]) -> Non
     state = get_user_state(user_id)
     state.generated_programs = programs
     save_user_state(state)
+    log.info(f"[STATE] user={user_id} generated_programs saved: { {k: len(v) for k, v in programs.items()} }")
 
 
 def mark_place_visited(user_id: int, place_id: str) -> None:
@@ -94,9 +103,11 @@ def mark_place_visited(user_id: int, place_id: str) -> None:
     if place_id not in state.visited_places:
         state.visited_places.append(place_id)
     save_user_state(state)
+    log.debug(f"[STATE] user={user_id} visited: {state.visited_places}")
+
 
 def reset_user_state(user_id: int) -> None:
     if user_id in _user_states:
         del _user_states[user_id]
-        get_user_state(user_id) # creates new
-
+    get_user_state(user_id)
+    log.info(f"[STATE] user={user_id} state RESET")
