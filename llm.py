@@ -1,9 +1,11 @@
 import os
+import sys
 from typing import Dict, List
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from state import UserState
 from prompts import build_system_prompt
@@ -13,14 +15,31 @@ from data_gyumri import get_nearby_places, get_place_by_id, _load_places
 load_dotenv()
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-if GROQ_API_KEY is None:
-    raise RuntimeError("GROQ_API_KEY is not set in environment variables.")
+# Определение выбранной модели из аргументов
+_model_choice = "GROQ"
+if len(sys.argv) >= 2:
+    if sys.argv[1].upper() in ["GROQ", "DEEPSEEK"]:
+        _model_choice = sys.argv[1].upper()
 
+print(f"=== Инициализация LLM: {_model_choice} ===")
 
-# Инициализация модели
-model = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
-
+if _model_choice == "DEEPSEEK":
+    if DEEPSEEK_API_KEY is None:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set in environment variables.")
+    model = ChatOpenAI(
+        model='deepseek-chat', 
+        openai_api_key=DEEPSEEK_API_KEY, 
+        openai_api_base='https://api.deepseek.com',
+        temperature=0.1, # 0.1 - очень точный, 0.7 - креативный
+        max_tokens=1000 # Ограничиваем длину, раз вам нужны короткие ответы
+    )
+else:
+    if GROQ_API_KEY is None:
+        raise RuntimeError("GROQ_API_KEY is not set in environment variables.")
+    # Инициализация модели GROQ по умолчанию
+    model = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
 
 # Настройки контекста
 MAX_TURNS_FOR_MODEL = 8          # сколько последних сообщений посылать в модель каждый раз

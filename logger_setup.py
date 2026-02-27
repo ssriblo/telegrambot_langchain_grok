@@ -34,17 +34,20 @@ _logger_instance = None
 
 
 def _parse_log_level() -> int:
-    """Читает --log из argv, не мешая другим парсерам."""
+    """Читает --log или позиционный аргумент для уровня логов."""
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument(
-        "--log",
-        type=str,
-        default="DEBUG",
-        choices=list(_LEVEL_MAP.keys()),
-        help="Уровень логирования: NONE | INFO | DEBUG (default: DEBUG)",
-    )
+    parser.add_argument("--log", type=str, default=None)
     args, _ = parser.parse_known_args()
-    return _LEVEL_MAP.get(args.log.upper(), logging.DEBUG)
+    
+    lvl_str = "DEBUG"
+    if args.log:
+        lvl_str = args.log.upper()
+    elif len(sys.argv) >= 3 and sys.argv[2].upper() in _LEVEL_MAP:
+        lvl_str = sys.argv[2].upper()
+    elif len(sys.argv) == 2 and sys.argv[1].upper() in _LEVEL_MAP:
+        lvl_str = sys.argv[1].upper()
+        
+    return _LEVEL_MAP.get(lvl_str, logging.DEBUG)
 
 
 def setup_logger(name: str = "bot") -> logging.Logger:

@@ -9,6 +9,7 @@ Warp conversations and updates:
 `https://app.warp.dev/session/912e6a3e-48e5-4801-a5eb-ae81ce4bfc99`
 
 run:
-python main.py              # DEBUG (максимум, по умолчанию)
-python main.py --log INFO   # только INFO/WARNING/ERROR (состояния, маршруты)
-python main.py --log NONE   # логирование отключено
+python main.py DEEPSEEK INFO  # Использовать DeepSeek, логи обрезать до INFO
+python main.py GROQ           # Использовать Groq (по умолчанию), все логи (DEBUG по умолчанию)
+python main.py NONE           # Использовать Groq (по умолчанию), логирование выключено 
+python main.py                # Использовать Groq (по умолчанию), все логи (DEBUG по умолчанию)
