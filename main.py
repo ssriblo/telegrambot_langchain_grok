@@ -80,6 +80,7 @@ def get_on_route_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="➡️ Следующая точка", callback_data="route_next")],
             [InlineKeyboardButton(text="⏭ Пропустить точку", callback_data="route_skip")],
             [InlineKeyboardButton(text="🗺 Текущий маршрут", callback_data="route_show")],
+            [InlineKeyboardButton(text="👀 Что рядом?", callback_data="route_whats_nearby")],
             [InlineKeyboardButton(text="🍽 Где поесть рядом?", callback_data="route_eat_nearby")]
         ])
     else:
@@ -87,6 +88,7 @@ def get_on_route_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="➡️ Next Place", callback_data="route_next")],
             [InlineKeyboardButton(text="⏭ Skip Place", callback_data="route_skip")],
             [InlineKeyboardButton(text="🗺 Show Route", callback_data="route_show")],
+            [InlineKeyboardButton(text="👀 What's nearby?", callback_data="route_whats_nearby")],
             [InlineKeyboardButton(text="🍽 Eat Nearby", callback_data="route_eat_nearby")]
         ])
 
@@ -332,19 +334,77 @@ async def process_callback(callback_query: types.CallbackQuery):
                 text = "🗺 Осталось посетить:\n" + "\n".join([f"- {n}" for n in names]) if state.language == "ru" else "🗺 Left to visit:\n" + "\n".join([f"- {n}" for n in names])
             await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
 
+        elif action == "whats_nearby":
+            log.debug(f"[U:{uid}][CB] whats_nearby, location={state.last_location}")
+            if state.last_location:
+                lat, lon = state.last_location
+                nearby = get_nearby_places(lat, lon, max_distance_km=0.1, limit=10)
+                log.debug(f"[U:{uid}][CB] places within 100m: {len(nearby)}")
+                if nearby:
+                    header = "👀 Вот что находится рядом с тобой (в радиусе ~100 м):\n" if state.language == "ru" else "👀 Here's what's around you (~100m radius):\n"
+                    text = header + "\n" + format_places_for_user(nearby, state.language)
+                else:
+                    text = "В радиусе 100 метров ничего не нашлось. Попробуй обновить геолокацию." if state.language == "ru" else "Nothing found within 100m. Try updating your location."
+            else:
+                text = 'Нужна геопозиция — отправь через 📎 → «Геопозиция».' if state.language == "ru" else 'Location needed — send via 📎 → "Location".'
+            await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+
         elif action == "eat_nearby":
             log.debug(f"[U:{uid}][CB] eat_nearby, location={state.last_location}")
             if state.last_location:
                 lat, lon = state.last_location
-                nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=3, categories={"food"})
+                nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=5, categories={"food"})
                 log.debug(f"[U:{uid}][CB] food found: {len(nearby)}")
                 if nearby:
                     text = format_places_for_user(nearby, state.language)
+                    # Build numbered buttons for each food place + back button
+                    buttons = []
+                    for idx, p in enumerate(nearby, start=1):
+                        name = p.get(f"name_{state.language}") or p.get("name_en") or "?"
+                        short = name[:25] + "…" if len(name) > 25 else name
+                        buttons.append([InlineKeyboardButton(
+                            text=f"{idx}. {short}",
+                            callback_data=f"food_{p.get('id', idx)}"
+                        )])
+                    back_label = "↩️ Вернуться на маршрут" if state.language == "ru" else "↩️ Back to route"
+                    buttons.append([InlineKeyboardButton(text=back_label, callback_data="route_back")])
+                    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+                    await callback_query.message.answer(text, reply_markup=kb)
                 else:
                     text = "Еды рядом не найдено." if state.language == "ru" else "No food found nearby."
+                    await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
             else:
                 text = "Нужна геопозиция." if state.language == "ru" else "Location needed."
-            await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+                await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+
+        elif action == "back":
+            # Return to on-route menu with current place info
+            log.debug(f"[U:{uid}][CB] back to route")
+            if state.current_route:
+                cur_place_id = state.current_route[0]
+                place = get_place_by_id(cur_place_id)
+                if place:
+                    await _send_place_navigation(
+                        callback_query.message, place, state,
+                        prefix_ru="📍 Текущая точка:",
+                        prefix_en="📍 Current stop:",
+                    )
+                    await callback_query.message.edit_reply_markup(reply_markup=None)
+            else:
+                text = "Маршрут пуст." if state.language == "ru" else "Route is empty."
+                await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
+
+    elif data.startswith("food_"):
+        place_id = data[5:]  # everything after "food_"
+        log.info(f"[U:{uid}][CB] food place selected: {place_id}")
+        place = get_place_by_id(place_id)
+        if place:
+            await callback_query.message.edit_reply_markup(reply_markup=None)
+            await _send_place_navigation(
+                callback_query.message, place, state,
+                prefix_ru="🍽 Идём сюда:",
+                prefix_en="🍽 Let's go here:",
+            )
 
     await callback_query.answer()
 

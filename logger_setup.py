@@ -16,8 +16,13 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime
 
-LOG_FILE = os.path.join(os.path.dirname(__file__), "bot_debug.log")
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
+_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+LOG_FILE = os.path.join(_LOG_DIR, f"bot_{_timestamp}.log")
 
 _LEVEL_MAP = {
     "NONE": logging.CRITICAL + 10,   # выше всех → ничего не печатается
