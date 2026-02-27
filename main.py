@@ -30,11 +30,21 @@ if TELEGRAM_BOT_TOKEN is None:
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
+# ── helpers ──────────────────────────────────────────────
+
+def _uid(message_or_cb) -> int:
+    """Extract user_id from message or callback."""
+    if hasattr(message_or_cb, "from_user"):
+        return message_or_cb.from_user.id
+    return 0
+
 def _detect_language(message: types.Message, text: str) -> str:
     if any("а" <= ch <= "я" or "А" <= ch <= "Я" for ch in text):
         return "ru"
     code = (message.from_user.language_code or "en").lower()
     return "ru" if code.startswith("ru") else "en"
+
+# ── keyboards ────────────────────────────────────────────
 
 def get_style_keyboard(lang: str) -> InlineKeyboardMarkup:
     if lang == "ru":
@@ -80,6 +90,7 @@ def get_on_route_keyboard(lang: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🍽 Eat Nearby", callback_data="route_eat_nearby")]
         ])
 
+# ── navigation card ──────────────────────────────────────
 
 async def _send_place_navigation(
     target,
@@ -89,6 +100,7 @@ async def _send_place_navigation(
     prefix_en: str = "📍 Next stop:",
     show_route_kb: bool = True,
 ):
+    uid = state.user_id
     lang = state.language
     name = place.get(f"name_{lang}") or place.get("name_en") or "Unknown"
     desc = place.get(f"short_description_{lang}") or place.get("short_description_en") or ""
@@ -97,7 +109,7 @@ async def _send_place_navigation(
 
     prefix = prefix_ru if lang == "ru" else prefix_en
 
-    log.debug(f"[NAV] Sending place: {name} (lat={lat}, lon={lon})")
+    log.debug(f"[U:{uid}][NAV] Sending place: {name} (lat={lat}, lon={lon})")
 
     lines = [f"{prefix} <b>{name}</b>", ""]
     if desc:
@@ -109,7 +121,7 @@ async def _send_place_navigation(
         dist = _haversine_km(user_lat, user_lon, float(lat), float(lon))
         dist_text = f"~{dist:.1f} км от тебя" if lang == "ru" else f"~{dist:.1f} km from you"
         lines.append(f"📏 {dist_text}")
-        log.debug(f"[NAV] Distance from user: {dist:.2f} km")
+        log.debug(f"[U:{uid}][NAV] Distance: {dist:.2f} km")
 
     if lat and lon:
         maps_url = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=walking"
@@ -117,7 +129,7 @@ async def _send_place_navigation(
         lines.append(f'<a href="{maps_url}">{link_label}</a>')
 
     text = "\n".join(lines)
-    log.debug(f"[NAV] Place card text:\n{text}")
+    log.debug(f"[U:{uid}][NAV] Card text:\n{text}")
     kb = get_on_route_keyboard(lang) if show_route_kb else None
     await target.answer(text, parse_mode="HTML", reply_markup=kb)
 
@@ -128,18 +140,18 @@ async def _send_place_navigation(
             title=name,
             address=desc[:100] if desc else name,
         )
-        log.debug(f"[NAV] Venue sent for {name}")
+        log.debug(f"[U:{uid}][NAV] Venue sent")
 
+# ── handlers ─────────────────────────────────────────────
 
 @dp.message(Command("start", "reset"))
 async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
-    log.info(f"[CMD] /start or /reset from user {user_id}")
-    reset_user_state(user_id)
+    uid = message.from_user.id
+    log.info(f"[U:{uid}][CMD] /start or /reset")
+    reset_user_state(uid)
     user_input = message.text or ""
     lang = _detect_language(message, user_input)
-    set_language(user_id, lang)
-    log.debug(f"[CMD] Detected language: {lang}")
+    set_language(uid, lang)
 
     if lang == "ru":
         await message.answer(
@@ -153,14 +165,14 @@ async def cmd_start(message: types.Message):
             "First, let's choose the communication style:",
             reply_markup=get_style_keyboard(lang)
         )
-    update_stage(user_id, "ASK_STYLE")
+    update_stage(uid, "ASK_STYLE")
 
 
 @dp.message(Command("style"))
 async def cmd_style(message: types.Message):
-    user_id = message.from_user.id
-    state = get_user_state(user_id)
-    log.info(f"[CMD] /style from user {user_id}, current style={state.style}")
+    uid = message.from_user.id
+    state = get_user_state(uid)
+    log.info(f"[U:{uid}][CMD] /style (current={state.style})")
     text = "Выбери стиль общения:" if state.language == "ru" else "Choose communication style:"
     await message.answer(text, reply_markup=get_style_keyboard(state.language))
 
@@ -171,27 +183,27 @@ async def handle_message(message: types.Message):
     if user_input.startswith("/"):
         return
 
-    user_id = message.from_user.id
-    state = get_user_state(user_id)
-    log.info(f"[MSG] user={user_id} stage={state.stage} lang={state.language} style={state.style}")
-    log.debug(f"[MSG] user_input: {user_input!r}")
-    log.debug(f"[MSG] state dump: location={state.last_location}, route={state.current_route}, "
-              f"visited={state.visited_places}, program={state.program_selected}")
+    uid = message.from_user.id
+    state = get_user_state(uid)
+    log.info(f"[U:{uid}][MSG] stage={state.stage} lang={state.language} style={state.style}")
+    log.debug(f"[U:{uid}][MSG] text: {user_input!r}")
+    log.debug(f"[U:{uid}][MSG] location={state.last_location} route={state.current_route} "
+              f"visited={state.visited_places} program={state.program_selected}")
 
     if state.stage == "NEW_USER":
-        log.debug("[MSG] NEW_USER → redirecting to cmd_start")
+        log.debug(f"[U:{uid}][MSG] NEW_USER → cmd_start")
         await cmd_start(message)
         return
 
     if state.stage == "ASK_STYLE":
-        log.debug("[MSG] ASK_STYLE → prompting to use buttons")
+        log.debug(f"[U:{uid}][MSG] ASK_STYLE → prompt buttons")
         msg = "Пожалуйста, выбери стиль кнопкой выше." if state.language == "ru" else "Please choose a style using the buttons above."
         await message.answer(msg)
         return
 
     if state.stage == "ASK_PREFERENCES":
-        log.debug(f"[MSG] ASK_PREFERENCES → saving preferences: {user_input!r}")
-        set_raw_preferences(user_id, user_input)
+        log.debug(f"[U:{uid}][MSG] ASK_PREFERENCES → saving: {user_input!r}")
+        set_raw_preferences(uid, user_input)
         if state.language == "ru":
             await message.answer(
                 "Спасибо! Я запомнил твои пожелания.\n\n"
@@ -204,25 +216,25 @@ async def handle_message(message: types.Message):
                 "To build a route from your current position, please send your location "
                 "via the 📎 → \u201cLocation\u201d button."
             )
-        update_stage(user_id, "ASK_LOCATION_REQUIRED")
+        update_stage(uid, "ASK_LOCATION_REQUIRED")
         return
 
     if state.stage == "ASK_LOCATION_REQUIRED":
-        log.debug("[MSG] ASK_LOCATION_REQUIRED → prompting for geo")
+        log.debug(f"[U:{uid}][MSG] ASK_LOCATION_REQUIRED → prompt geo")
         msg = "Пожалуйста, отправь геолокацию." if state.language == "ru" else "Please send your location."
         await message.answer(msg)
         return
 
     if state.stage == "SHOW_PROGRAM_OPTIONS":
-        log.debug("[MSG] SHOW_PROGRAM_OPTIONS → prompting to use buttons")
+        log.debug(f"[U:{uid}][MSG] SHOW_PROGRAM_OPTIONS → prompt buttons")
         msg = "Пожалуйста, выбери маршрут кнопками." if state.language == "ru" else "Please choose a route with the buttons."
         await message.answer(msg)
         return
 
     # Free chat or On Route
-    log.info(f"[MSG] Calling LLM for user {user_id} (stage={state.stage})")
-    reply_text = generate_reply(user_id=user_id, user_input=user_input, user_state=state)
-    log.debug(f"[MSG] LLM reply (first 300 chars): {reply_text[:300]!r}")
+    log.info(f"[U:{uid}][MSG] Calling LLM (stage={state.stage})")
+    reply_text = generate_reply(user_id=uid, user_input=user_input, user_state=state)
+    log.debug(f"[U:{uid}][MSG] LLM reply (300): {reply_text[:300]!r}")
 
     if state.stage == "ON_ROUTE":
         await message.answer(reply_text, reply_markup=get_on_route_keyboard(state.language))
@@ -232,18 +244,18 @@ async def handle_message(message: types.Message):
 
 @dp.callback_query()
 async def process_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    state = get_user_state(user_id)
+    uid = callback_query.from_user.id
+    state = get_user_state(uid)
     data = callback_query.data
-    log.info(f"[CB] user={user_id} callback_data={data!r} stage={state.stage}")
-    log.debug(f"[CB] state dump: lang={state.language}, style={state.style}, "
-              f"route={state.current_route}, visited={state.visited_places}, "
-              f"program={state.program_selected}, location={state.last_location}")
+    log.info(f"[U:{uid}][CB] data={data!r} stage={state.stage}")
+    log.debug(f"[U:{uid}][CB] lang={state.language} style={state.style} "
+              f"route={state.current_route} visited={state.visited_places} "
+              f"program={state.program_selected} location={state.last_location}")
 
     if data.startswith("style_"):
         style = data.split("_")[1]
-        log.debug(f"[CB] Setting style to {style}")
-        set_style(user_id, style)
+        log.debug(f"[U:{uid}][CB] style → {style}")
+        set_style(uid, style)
 
         await callback_query.message.edit_reply_markup(reply_markup=None)
         if state.stage == "ASK_STYLE":
@@ -257,29 +269,27 @@ async def process_callback(callback_query: types.CallbackQuery):
                     "Great, style saved!\n"
                     "Tell me what you'd like to see in Gyumri and how much time you have?"
                 )
-            update_stage(user_id, "ASK_PREFERENCES")
-            log.debug("[CB] Stage → ASK_PREFERENCES")
+            update_stage(uid, "ASK_PREFERENCES")
         else:
             msg = "Стиль изменен!" if state.language == "ru" else "Style changed!"
             await callback_query.answer(msg)
 
     elif data.startswith("prog_"):
         prog_id = data.split("_")[1]
-        log.info(f"[CB] Program selected: {prog_id}")
-        set_program(user_id, prog_id)
-        update_stage(user_id, "ON_ROUTE")
-        log.debug("[CB] Stage → ON_ROUTE")
+        log.info(f"[U:{uid}][CB] program selected: {prog_id}")
+        set_program(uid, prog_id)
+        update_stage(uid, "ON_ROUTE")
 
         await callback_query.message.edit_reply_markup(reply_markup=None)
         msg = "Маршрут выбран! Погнали!" if state.language == "ru" else "Route selected! Let's go!"
         await callback_query.answer(msg)
 
-        state = get_user_state(user_id)
-        log.debug(f"[CB] current_route after set_program: {state.current_route}")
+        state = get_user_state(uid)
+        log.debug(f"[U:{uid}][CB] route after set_program: {state.current_route}")
         if state.current_route:
             first_place_id = state.current_route[0]
             place = get_place_by_id(first_place_id)
-            log.debug(f"[CB] First place id={first_place_id}, found={place is not None}")
+            log.debug(f"[U:{uid}][CB] first place id={first_place_id} found={place is not None}")
             if place:
                 await _send_place_navigation(
                     callback_query.message, place, state,
@@ -289,29 +299,28 @@ async def process_callback(callback_query: types.CallbackQuery):
 
     elif data.startswith("route_"):
         action = data.split("_", 1)[1]
-        log.info(f"[CB] Route action: {action}")
+        log.info(f"[U:{uid}][CB] route action: {action}")
         if action == "next" or action == "skip":
             if state.current_route:
                 visited_id = state.current_route.pop(0)
-                log.debug(f"[CB] Popped place {visited_id} (action={action})")
+                log.debug(f"[U:{uid}][CB] popped {visited_id} (action={action})")
                 if action == "next":
-                    mark_place_visited(user_id, visited_id)
-                    log.debug(f"[CB] Marked {visited_id} as visited")
+                    mark_place_visited(uid, visited_id)
 
-            log.debug(f"[CB] Remaining route: {state.current_route}")
+            log.debug(f"[U:{uid}][CB] remaining route: {state.current_route}")
             if state.current_route:
                 next_place_id = state.current_route[0]
                 place = get_place_by_id(next_place_id)
                 if place:
                     await _send_place_navigation(callback_query.message, place, state)
             else:
-                log.info(f"[CB] Route finished for user {user_id}")
+                log.info(f"[U:{uid}][CB] route finished")
                 text = "🎉 Маршрут закончен!" if state.language == "ru" else "🎉 Route finished!"
-                update_stage(user_id, "FREE_CHAT")
+                update_stage(uid, "FREE_CHAT")
                 await callback_query.message.answer(text)
 
         elif action == "show":
-            log.debug(f"[CB] Showing remaining route: {state.current_route}")
+            log.debug(f"[U:{uid}][CB] show route: {state.current_route}")
             if not state.current_route:
                 text = "Маршрут пуст." if state.language == "ru" else "Route is empty."
             else:
@@ -324,11 +333,11 @@ async def process_callback(callback_query: types.CallbackQuery):
             await callback_query.message.answer(text, reply_markup=get_on_route_keyboard(state.language))
 
         elif action == "eat_nearby":
-            log.debug(f"[CB] Eat nearby, location={state.last_location}")
+            log.debug(f"[U:{uid}][CB] eat_nearby, location={state.last_location}")
             if state.last_location:
                 lat, lon = state.last_location
                 nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=3, categories={"food"})
-                log.debug(f"[CB] Found {len(nearby)} food places nearby")
+                log.debug(f"[U:{uid}][CB] food found: {len(nearby)}")
                 if nearby:
                     text = format_places_for_user(nearby, state.language)
                 else:
@@ -342,38 +351,38 @@ async def process_callback(callback_query: types.CallbackQuery):
 
 @dp.message(F.location)
 async def handle_location(message: types.Message):
-    user_id = message.from_user.id
-    state = get_user_state(user_id)
+    uid = message.from_user.id
+    state = get_user_state(uid)
     loc = message.location
     if loc is None:
         return
 
     lat = loc.latitude
     lon = loc.longitude
-    log.info(f"[LOC] user={user_id} lat={lat} lon={lon} stage={state.stage}")
-    set_location(user_id, lat, lon)
+    log.info(f"[U:{uid}][LOC] lat={lat} lon={lon} stage={state.stage}")
+    set_location(uid, lat, lon)
 
     if state.stage == "ASK_LOCATION_REQUIRED":
-        update_stage(user_id, "SHOW_PROGRAM_OPTIONS")
+        update_stage(uid, "SHOW_PROGRAM_OPTIONS")
         target_hours = 4.0
-        log.debug(f"[LOC] Generating programs for {target_hours}h")
-        programs = generate_programs(lat, lon, time_hours=target_hours)
+        log.debug(f"[U:{uid}][LOC] generating programs for {target_hours}h")
+        programs = generate_programs(lat, lon, time_hours=target_hours, user_id=uid)
 
         programs_ids = {
             prog_id: [p["id"] for p in places]
             for prog_id, places in programs.items()
         }
-        log.debug(f"[LOC] Generated program IDs: { {k: len(v) for k, v in programs_ids.items()} }")
+        log.debug(f"[U:{uid}][LOC] program IDs: { {k: len(v) for k, v in programs_ids.items()} }")
         for prog_id, ids in programs_ids.items():
-            log.debug(f"[LOC]   {prog_id}: {ids}")
-        save_generated_programs(user_id, programs_ids)
+            log.debug(f"[U:{uid}][LOC]   {prog_id}: {ids}")
+        save_generated_programs(uid, programs_ids)
 
         text = format_program_options(programs, language=state.language)
-        log.debug(f"[LOC] Program options text:\n{text}")
+        log.debug(f"[U:{uid}][LOC] options text:\n{text}")
         await message.answer(text, reply_markup=get_program_keyboard(state.language))
     else:
         nearby = get_nearby_places(lat, lon, max_distance_km=2.0, limit=5)
-        log.debug(f"[LOC] Found {len(nearby)} nearby places")
+        log.debug(f"[U:{uid}][LOC] nearby found: {len(nearby)}")
         text = format_places_for_user(nearby, language=state.language)
         if state.stage == "ON_ROUTE":
             await message.answer(text, reply_markup=get_on_route_keyboard(state.language))
