@@ -39,7 +39,11 @@ else:
     if GROQ_API_KEY is None:
         raise RuntimeError("GROQ_API_KEY is not set in environment variables.")
     # Инициализация модели GROQ по умолчанию
-    model = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
+    model = ChatGroq(
+        api_key=GROQ_API_KEY, 
+        model="llama-3.3-70b-versatile",
+        temperature=0.1, # 0.1 - очень точный, 0.7 - креативный
+    )
 
 # Настройки контекста
 MAX_TURNS_FOR_MODEL = 8          # сколько последних сообщений посылать в модель каждый раз
