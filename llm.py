@@ -52,7 +52,7 @@ KEEP_RECENT_AFTER_SUMMARY = 6    # сколько последних сообщ�
 _user_conversations: Dict[int, List] = {}
 
 
-def summarize_dialog(messages):
+def summarize_dialog(messages, language: str = "ru"):
     """
     Делает краткую выжимку по длинному диалогу.
     Использует ту же модель, но только один раз на “пакет” старых сообщений.
@@ -60,15 +60,20 @@ def summarize_dialog(messages):
     if not messages:
         return ""
 
-    summary_prompt = [
-        HumanMessage(
-            content=(
-                "Сделай краткую выжимку предыдущего диалога между пользователем и ассистентом. "
-                "Выдели факты, решения и важный контекст, который нужен для продолжения общения. "
-                "Ответь одной связной текстовой выжимкой без лишних деталей."
-            )
+    if language == "ru":
+        prompt_text = (
+            "Сделай краткую выжимку предыдущего диалога между пользователем и ассистентом. "
+            "Выдели факты, решения и важный контекст, который нужен для продолжения общения. "
+            "Ответь одной связной текстовой выжимкой на русском языке без лишних деталей."
         )
-    ] + messages
+    else:
+        prompt_text = (
+            "Provide a brief summary of the previous conversation between the user and the assistant. "
+            "Highlight facts, decisions, and important context needed to continue the conversation. "
+            "Respond with a single coherent text summary in English without unnecessary details."
+        )
+
+    summary_prompt = [SystemMessage(content=prompt_text)] + messages
 
     summary_response = model.invoke(summary_prompt)
     return summary_response.content
@@ -175,9 +180,11 @@ def generate_reply(user_id: int, user_input: str, user_state: UserState) -> str:
         old_part = full_history[:-KEEP_RECENT_AFTER_SUMMARY]
         recent_part = full_history[-KEEP_RECENT_AFTER_SUMMARY:]
 
-        summary_text = summarize_dialog(old_part)
-        summary_message = HumanMessage(
-            content=f"Краткая выжимка предыдущего диалога:\n{summary_text}"
+        summary_text = summarize_dialog(old_part, user_state.language)
+        
+        prefix = "Краткая выжимка предыдущего диалога:" if user_state.language == "ru" else "Brief summary of the previous conversation:"
+        summary_message = SystemMessage(
+            content=f"{prefix}\n{summary_text}"
         )
 
         # В истории остаётся одно саммари + несколько последних “сырых” сообщений
